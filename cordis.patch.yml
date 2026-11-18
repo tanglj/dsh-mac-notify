@@ -1,0 +1,4 @@
+- insert:
+    - id: mac-notify
+      name: '@local/dsh-mac-notify'
+      config: {}
