@@ -22,6 +22,8 @@ export const Config = z.object({
   notifyCompletion: z.boolean().default(true).volatile(),
   /** 需要你介入（授权、提问、方案确认）时是否提醒。 */
   notifyAttention: z.boolean().default(true).volatile(),
+  /** Dock 图标上是否显示未读会话数量。 */
+  dockBadge: z.boolean().default(true).volatile(),
 })
 
 /**

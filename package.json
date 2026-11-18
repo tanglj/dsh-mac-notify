@@ -1,9 +1,26 @@
 {
   "name": "@local/dsh-mac-notify",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "DSH 任务提醒：需要授权/回答时提醒，任务结束时按真实原因提醒，可在设置里开关，点击回到对应会话",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "notification",
+    "macos",
+    "dock-badge"
+  ],
+  "homepage": "https://github.com/tanglj/dsh-mac-notify#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tanglj/dsh-mac-notify.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tanglj/dsh-mac-notify/issues"
+  },
+  "license": "MIT",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -32,6 +49,9 @@
         "@deepseek-ai/dsh-client-locale"
       ]
     }
+  },
+  "scripts": {
+    "test": "node test/client.test.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/schemastery": "*"

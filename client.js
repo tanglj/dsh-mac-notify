@@ -35,6 +35,9 @@ window.__ModuleLoader__.load({
       'settings.attention.title': '待确认提醒',
       'settings.attention.description': '工具请求授权、有问题待回答或方案待确认时弹系统通知。',
       'settings.attention.label': '待确认提醒开关',
+      'settings.dockBadge.title': 'Dock 未读徽标',
+      'settings.dockBadge.description': '会话跑完或等你确认时，程序坞图标上显示未读数量；打开会话即清除。',
+      'settings.dockBadge.label': 'Dock 未读徽标开关',
       'settings.saveFailed': '没能保存这个开关，请稍后再试。',
     }
 
@@ -64,6 +67,9 @@ window.__ModuleLoader__.load({
       'settings.attention.title': 'Confirmation notifications',
       'settings.attention.description': 'Notify when a tool asks for approval, a question waits, or a plan needs review.',
       'settings.attention.label': 'Confirmation notifications',
+      'settings.dockBadge.title': 'Dock unread badge',
+      'settings.dockBadge.description': 'Show how many sessions finished or await your confirmation on the Dock icon; opening a session clears it.',
+      'settings.dockBadge.label': 'Dock unread badge',
       'settings.saveFailed': 'Could not save this switch. Try again later.',
     }
 
@@ -409,6 +415,68 @@ window.__ModuleLoader__.load({
         const status = ctx.uiSession.sessionStatus
         previous = new Map(status.getSnapshot())
 
+        /** 最近一次写进 Dock 的数字，避免重复调用同一个值。 */
+        let shownBadge = -1
+
+        /**
+         * 计算应显示的未读会话数。
+         *
+         * 两类算作未读：跑完但还没打开过的会话（`completionUnread`），
+         * 以及正等你授权/回答/确认的会话。子 Agent 会话不能在主区单独打开，
+         * 计入会产生清不掉的数字，所以排除。
+         *
+         * @returns {number} 未读会话数。
+         */
+        const unreadCount = () => {
+          if (!preference('dockBadge')) return 0
+          let snapshot
+          try {
+            snapshot = status.getSnapshot()
+          } catch {
+            return 0
+          }
+          let count = 0
+          for (const [sessionId, current] of snapshot) {
+            if (summaryOf(sessionId)?.origin === 'subagent') continue
+            if (current.completionUnread || current.pendingInteraction !== undefined) count += 1
+          }
+          return count
+        }
+
+        /** 把未读数写到 Dock 徽标；数字没变就不重复调用。 */
+        const syncBadge = () => {
+          const api = typeof navigator === 'undefined' ? undefined : navigator
+          if (typeof api?.setAppBadge !== 'function') return
+          const count = unreadCount()
+          if (count === shownBadge) return
+          shownBadge = count
+          /** 系统拒绝或取消时忽略，不影响通知本身。 */
+          const ignore = () => {}
+          try {
+            if (count === 0) {
+              const pending = api.clearAppBadge?.()
+              if (pending !== undefined && typeof pending.catch === 'function') pending.catch(ignore)
+            } else {
+              const pending = api.setAppBadge(count)
+              if (pending !== undefined && typeof pending.catch === 'function') pending.catch(ignore)
+            }
+          } catch {
+            // 没有徽标权限或 API 不可用时保持安静。
+          }
+        }
+
+        // 插件卸载或热重载时清掉徽标，不留一个过期数字。
+        ctx.effect(() => () => {
+          shownBadge = 0
+          try {
+            navigator?.clearAppBadge?.()
+          } catch {
+            // 同上，清理失败不影响卸载。
+          }
+        }, 'mac-notify: badge cleanup')
+
+        syncBadge()
+
         /**
          * 补发提醒：窗口失去焦点或隐藏时，重新检查仍然等着的请求。
          *
@@ -477,6 +545,7 @@ window.__ModuleLoader__.load({
             if (!pendingKeys.has(key)) announced.delete(key)
           }
           previous = new Map(next)
+          syncBadge()
         }), 'mac-notify: session status')
 
         // 设置行：设置服务与插槽都可用时才出现，缺失时插件照常提醒。
@@ -521,6 +590,14 @@ window.__ModuleLoader__.load({
 
           registerRow('mac-notify-completion', 18, 'notifyCompletion', 'completion')
           registerRow('mac-notify-attention', 19, 'notifyAttention', 'attention')
+          registerRow('mac-notify-dock-badge', 20, 'dockBadge', 'dockBadge')
+
+          // 开关变化后立刻重算徽标；关掉时这里会把它清零。
+          ctx.effect(
+            () => settingsForm.subscribe(() => { syncBadge() }),
+            'mac-notify: badge preference',
+          )
+          syncBadge()
         })
       },
     }

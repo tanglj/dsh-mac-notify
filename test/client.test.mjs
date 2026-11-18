@@ -126,6 +126,27 @@ class FakeNotification {
 
 globalThis.Notification = FakeNotification
 
+/** 记录 Dock 徽标调用。 */
+const badgeCalls = []
+
+/** 伪造的 Badging API。 */
+const fakeNavigator = {
+  setAppBadge(count) {
+    badgeCalls.push(['set', count])
+    return Promise.resolve()
+  },
+  clearAppBadge() {
+    badgeCalls.push(['clear'])
+    return Promise.resolve()
+  },
+}
+
+Object.defineProperty(globalThis, 'navigator', {
+  value: fakeNavigator,
+  configurable: true,
+  writable: true,
+})
+
 /** 已注册的界面语言词典，键为命名空间。 */
 const dictionaries = new Map()
 
@@ -637,13 +658,15 @@ const singleSession = (id, displayTitle, cwd) => ({
   clientModule.apply(ctx)
   watching = false
 
-  assert.equal(settingsRows.length, 2, '应注册两条设置行')
+  assert.equal(settingsRows.length, 3, '应注册三条设置行')
   const completion = settingsRows.find(row => row.options.id === 'mac-notify-completion')
   const attention = settingsRows.find(row => row.options.id === 'mac-notify-attention')
-  assert.ok(completion !== undefined && attention !== undefined, '两条行都按 id 注册')
+  const dockBadge = settingsRows.find(row => row.options.id === 'mac-notify-dock-badge')
+  assert.ok(completion !== undefined && attention !== undefined && dockBadge !== undefined, '三条行都按 id 注册')
   assert.equal(completion.options.name, 'settings.general.item', '注册到「通用」设置插槽')
   assert.equal(completion.options.locale, 'mac-notify', '文案走插件自己的命名空间')
   assert.ok(completion.options.order < attention.options.order, '结束提醒排在待确认提醒之前')
+  assert.ok(attention.options.order < dockBadge.options.order, '徽标开关排在最后')
 
   const face = completion.options.inject()
   assert.equal(face.selectValue({ value: {} }), true, '没有保存值时默认开启')
@@ -655,8 +678,78 @@ const singleSession = (id, displayTitle, cwd) => ({
   const attentionFace = attention.options.inject()
   await attentionFace.setValue(false)
   assert.deepEqual(settingsWrites.at(-1), ['notifyAttention', false], '第二个开关写入自己的字段')
+
+  const badgeFace = dockBadge.options.inject()
+  assert.equal(badgeFace.selectValue({ value: {} }), true, '徽标默认开启')
+  await badgeFace.setValue(false)
+  assert.deepEqual(settingsWrites.at(-1), ['dockBadge', false], '徽标开关写入自己的字段')
   settingsValues = {}
   console.log('用例十八通过：设置行注册与读写')
+}
+
+// 用例十九：未读会话数写进 Dock 徽标，读完后清零。
+{
+  badgeCalls.length = 0
+  settingsValues = {}
+  sessions = singleSession('s23', '未读会话', '/tmp/unread')
+  const { ctx, push } = createClientContext()
+  clientModule.apply(ctx)
+
+  // 应用启动时没有未读，先清一次。
+  assert.deepEqual(badgeCalls.at(-1), ['clear'], '没有未读时清除徽标')
+
+  badgeCalls.length = 0
+  push([['s23', stateOf({ completionUnread: true })]])
+  assert.deepEqual(badgeCalls, [['set', 1]], '一个未读会话显示 1')
+
+  // 同一状态重复推送不应重复写徽标。
+  push([['s23', stateOf({ completionUnread: true })]])
+  assert.equal(badgeCalls.length, 1, '数字没变不重复调用')
+
+  push([['s23', stateOf({ completionUnread: false })]])
+  assert.deepEqual(badgeCalls.at(-1), ['clear'], '读完清除徽标')
+  console.log('用例十九通过：未读数量徽标与清零')
+}
+
+// 用例二十：待确认会话也计入，子 Agent 会话不计入。
+{
+  badgeCalls.length = 0
+  settingsValues = {}
+  sessions = {
+    ids: ['s24', 's25'],
+    byId: {
+      s24: { id: 's24', displayTitle: '等确认', cwd: '/tmp/pending', running: false },
+      s25: { id: 's25', displayTitle: '子任务', cwd: '/tmp/sub', running: false, origin: 'subagent' },
+    },
+  }
+  const { ctx, push } = createClientContext()
+  clientModule.apply(ctx)
+  badgeCalls.length = 0
+
+  push([
+    ['s24', stateOf({
+      pendingInteraction: { key: 'approval:badge', kind: 'approval', sessionId: 's24', toolName: 'Bash' },
+    })],
+    ['s25', stateOf({ completionUnread: true })],
+  ])
+  assert.deepEqual(badgeCalls, [['set', 1]], '只数一个需要处理的会话，子会话不计')
+  console.log('用例二十通过：计入待确认、排除子会话')
+}
+
+// 用例二十一：关掉徽标开关后不显示，且开关变化会立即重算。
+{
+  badgeCalls.length = 0
+  settingsValues = { dockBadge: false }
+  sessions = singleSession('s26', '关掉徽标', '/tmp/no-badge')
+  const { ctx, push } = createClientContext()
+  clientModule.apply(ctx)
+  assert.deepEqual(badgeCalls.at(-1), ['clear'], '关掉时清除并保持无数字')
+
+  badgeCalls.length = 0
+  push([['s26', stateOf({ completionUnread: true })]])
+  assert.equal(badgeCalls.length, 0, '关掉后未读也不写徽标')
+  settingsValues = {}
+  console.log('用例二十一通过：徽标开关')
 }
 
 /**
